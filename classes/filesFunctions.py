@@ -57,4 +57,4 @@ class FilesFunctions:
             self.log_text.see(tk.END) # Auto-scroll
             self.log_text.config(state='disabled')
         else:
-            print(mensagem) # Fallback se o log_text não for fornecido
+            print(mensagem) 
