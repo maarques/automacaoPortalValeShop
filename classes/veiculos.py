@@ -1,7 +1,20 @@
 import tkinter as tk
-import backend.veiculo as backend
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from classes.filesFunctions import FilesFunctions
+import threading
+import time
+import pandas as pd
+# Importações do Selenium não são mais necessárias aqui
+# A importação principal do backend
+import backend.veiculo as backend 
+
+
+# ==================================================================
+# CONFIGURAÇÕES (Movidas de volta para o backend/veiculo.py)
+# ==================================================================
+# URL_LOGIN e LOCATORS não são mais necessários aqui
+# ==================================================================
+
 
 class AppCadastroVeiculo:
     def __init__(self, parent_tab):
@@ -11,7 +24,7 @@ class AppCadastroVeiculo:
         main_frame = ttk.Frame(self.frame)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        frame_entrada = ttk.LabelFrame(main_frame, text="1. Selecionar Arquivos de Entrada", padding=15)
+        frame_entrada = ttk.LabelFrame(main_frame, text="1. Selecionar Arquivo de Entrada (Excel)", padding=15)
         frame_entrada.pack(fill=tk.X, padx=10, pady=10)
 
         self.lbl_entrada_status = ttk.Label(frame_entrada, text="Nenhuma entrada selecionada.", wraplength=650)
@@ -19,7 +32,8 @@ class AppCadastroVeiculo:
         frame_acao = ttk.Frame(main_frame)
         frame_acao.pack(fill=tk.X, padx=10, pady=10)
         
-        self.btn_gerar = ttk.Button(frame_acao, text="REGISTRAR VEÍCULO", command=self.registrar_veiculo_placeholder)
+        # Atualiza o comando do botão
+        self.btn_gerar = ttk.Button(frame_acao, text="REGISTRAR VEÍCULO", command=self.iniciar_processamento_veiculo)
         self.btn_gerar.pack(fill=tk.X, ipady=10)
 
         frame_log = ttk.LabelFrame(main_frame, text="Mensagens do Processo", padding=10)
@@ -32,33 +46,127 @@ class AppCadastroVeiculo:
         self.log_text.pack(fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.log_text.yview)
 
+        # Configura FilesFunctions para não mostrar seleção de saída (lbl_saida=None)
         self.functions = FilesFunctions(self.lbl_entrada_status, None, self.log_text)
 
-        btn_arquivos = ttk.Button(frame_entrada, text="Selecionar Arquivos (.docx, .xlsx)", command=self.functions.selecionar_arquivos)
+        # A lógica só permite 1 arquivo, então mudamos o comando
+        btn_arquivos = ttk.Button(frame_entrada, text="Selecionar Arquivo (.xlsx)", command=self.selecionar_arquivo_veiculo)
         btn_arquivos.pack(fill=tk.X, pady=5)
-
-        # btn_pasta = ttk.Button(frame_entrada, text="Selecionar Pasta (contém .docx, .xlsx)", command=self.functions.selecionar_pasta)
-        # btn_pasta.pack(fill=tk.X, pady=5)
         
         self.lbl_entrada_status.pack(fill=tk.X, pady=5) 
 
-
     def log(self, mensagem: str):
+        """ Loga mensagens na caixa de texto da UI de forma thread-safe. """
         if self.log_text:
-            self.log_text.config(state='normal')
-            self.log_text.insert(tk.END, f"{mensagem}\n")
-            self.log_text.see(tk.END) # Auto-scroll
-            self.log_text.config(state='disabled')
+            try:
+                # Usa 'after' para garantir que a atualização da UI ocorra no thread principal
+                self.frame.after(0, self._log_update, mensagem)
+            except tk.TclError:
+                # Janela pode ter sido fechada
+                print(mensagem)
         else:
             print(mensagem)
             
-    def registrar_veiculo_placeholder(self):
+    def _log_update(self, mensagem: str):
+        """ Método auxiliar para atualização do log (chamado pelo 'after') """
+        self.log_text.config(state='normal')
+        self.log_text.insert(tk.END, f"{mensagem}\n")
+        self.log_text.see(tk.END) # Auto-scroll
+        self.log_text.config(state='disabled')
+            
+    def selecionar_arquivo_veiculo(self):
+        """ Modifica a seleção de arquivos para aceitar apenas um arquivo. """
+        tipos_arquivo = [
+            ("Planilha Excel", "*.xlsx"),
+            ("Todos os arquivos", "*.*")
+        ]
+        # Usa askopenfilename (singular) em vez de askopenfilenames (plural)
+        arquivo = tk.filedialog.askopenfilename(title="Selecione o arquivo de cadastro", filetypes=tipos_arquivo)
+        if arquivo:
+            self.functions.arquivos_selecionados = [arquivo] # Armazena como lista
+            if self.functions.lbl_entrada_status:
+                self.functions.lbl_entrada_status.config(text=f"Arquivo selecionado: {arquivo}")
+            self.log(f"Entrada definida: {arquivo}")
+
+    def iniciar_processamento_veiculo(self):
+        """ Inicia o processo de registro em uma nova thread. """
         self.functions.limpar_log()
         self.log("--- Iniciando Registro de Veículo ---")
         
         if not self.functions.arquivos_selecionados:
             self.log("ERRO: Nenhum arquivo de entrada selecionado.")
+            messagebox.showerror("Erro", "Nenhum arquivo de entrada selecionado.")
             return
             
-        self.log(f"Arquivos/Pastas selecionados: {self.functions.arquivos_selecionados}")
-        self.log("TODO: Implementar lógica de registro de veículo.")
+        self.btn_gerar.config(text="PROCESSANDO...", state='disabled')
+        
+        # Inicia a lógica pesada (selenium) em uma thread separada
+        threading.Thread(
+            target=self.processar_em_thread,
+            daemon=True
+        ).start()
+
+    def _funcao_de_pausa_para_login(self):
+        """
+        Esta função será executada pela thread do backend, mas mostra
+        o messagebox na thread principal da UI.
+        """
+        self.log("="*50)
+        self.log("--- AÇÃO MANUAL NECESSÁRIA ---")
+        self.log("O navegador foi aberto.")
+        self.log("1. Faça o login no sistema.")
+        self.log("2. Resolva o CAPTCHA (se houver).")
+        self.log("3. Navegue até a tela 'Cadastrar Vendas sem Cartão'.")
+        self.log("="*50)
+        
+        # Usa messagebox para pausar a execução
+        messagebox.showinfo(
+            "Ação Manual Necessária",
+            "O navegador foi aberto.\n\n"
+            "1. Faça o login no sistema.\n"
+            "2. Resolva o CAPTCHA (se houver).\n"
+            "3. Navegue até a tela 'Cadastrar Vendas sem Cartão'.\n\n"
+            "Clique em 'OK' NESTA JANELA apenas quando o formulário estiver visível."
+        )
+
+    def processar_em_thread(self):
+        """
+        Thread de trabalho: chama as funções do backend.
+        """
+        try:
+            # Pega o primeiro (e único) arquivo selecionado
+            caminho_arquivo = self.functions.arquivos_selecionados[0]
+            self.log(f"Processando arquivo: {caminho_arquivo}")
+            
+            # 1. Chama a função de extração do backend, passando o logger
+            dados_veiculo = backend.extrair_dados_planilha(caminho_arquivo, self.log)
+            
+            if dados_veiculo:
+                # 2. Chama a função de preenchimento do backend, passando o logger
+                #    e a função de pausa (callback)
+                backend.preencher_formulario_web(
+                    dados_veiculo, 
+                    self.log, 
+                    self._funcao_de_pausa_para_login
+                )
+            else:
+                self.log("ERRO: Falha ao extrair dados da planilha. Verifique o log acima.")
+                # Usa 'after' para garantir que o messagebox rode na thread principal
+                self.frame.after(0, lambda: messagebox.showerror("Erro de Leitura", "Não foi possível ler os dados da planilha. Verifique o log."))
+
+        except Exception as e:
+            self.log(f"\nERRO INESPERADO no processamento: {e}")
+            self.frame.after(0, lambda: messagebox.showerror("Erro Inesperado", f"Ocorreu um erro: {e}"))
+        finally:
+            # Garante que o botão seja reativado no thread principal
+            self.frame.after(0, lambda: self.btn_gerar.config(text="REGISTRAR VEÍCULO", state='normal'))
+
+
+    # ==================================================================
+    # LÓGICA MOVIDA DE VOLTA PARA backend/veiculo.py
+    # ==================================================================
+    # def extrair_dados_planilha(self, ...):
+    # def preencher_formulario_web(self, ...):
+    # (Estes métodos foram removidos desta classe)
+    # ==================================================================
+

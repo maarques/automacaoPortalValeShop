@@ -1,5 +1,6 @@
 import time
 import pandas as pd  # Usa pandas
+import re  # Importa expressões regulares
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -8,7 +9,7 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
  
 # ==================================================================
-# CONFIGURAÇÕES (JÁ PREENCHIDAS POR VOCÊ)
+# CONFIGURAÇÕES
 # ==================================================================
 URL_LOGIN = "https://www.valeshop.com.br/portal/valeshop/!AP_LOGIN?p_tipo=1"
  
@@ -21,12 +22,40 @@ LOCATORS = {
     'veiculo_marca': (By.NAME, 'p_ds_marca_veiculo'),
     'veiculo_modelo': (By.NAME, 'p_nm_modelo_veiculo'),
 }
+ 
+# --- MAPEAMENTO DE CHAVES PARA BUSCA ---
+# Define as chaves que buscamos na planilha (lado esquerdo)
+# e o nome do campo que elas representarão (lado direito)
+MAP_CHAVES_BUSCA = {
+    'nome': ['CONDUTOR'],
+    'matricula': ['CPF'],
+    'destino': ['DESTINO'],
+    'veiculo': ['VEÍCULO'], # Capturará a string completa (ex: "MiTSUBISHI 4454")
+    'placa': ['PLACA']
+}
 # ==================================================================
+ 
+def _extrair_valor_busca(texto_celula):
+    """
+    Função auxiliar para verificar se um texto de célula corresponde a uma chave.
+    """
+    if not isinstance(texto_celula, str):
+        return None
+    
+    # Limpa o texto: "  CONDUTOR:  " -> "CONDUTOR"
+    texto_limpo = texto_celula.strip().rstrip(':').strip()
+    
+    for chave_padrao, variacoes in MAP_CHAVES_BUSCA.items():
+        for variacao in variacoes:
+            # Compara ignorando maiúsculas/minúsculas
+            if texto_limpo.lower() == variacao.lower():
+                return chave_padrao # Retorna a chave (ex: 'nome')
+    return None # Não é uma chave que procuramos
  
  
 def extrair_dados_planilha(caminho_arquivo, logger):
     """
-    Lê os dados de células específicas da planilha (modelo PMDF) com PANDAS.
+    Lê os dados da planilha iterando pelas células em busca de chaves.
     """
     logger(f"Lendo planilha com pandas: {caminho_arquivo}")
     try:
@@ -34,57 +63,81 @@ def extrair_dados_planilha(caminho_arquivo, logger):
         with open(caminho_arquivo, 'rb') as f:
             df = pd.read_excel(f, header=None, engine='openpyxl')        
            
-       
         dados = {}
+        chaves_encontradas = set()
+        chaves_necessarias = set(MAP_CHAVES_BUSCA.keys())
+        
+        # Itera por todas as linhas
+        for row_idx, row in df.iterrows():
+            # Itera por todas as células da linha
+            for col_idx, celula in enumerate(row):
+                
+                chave_encontrada = _extrair_valor_busca(celula)
+                
+                # Se a célula é uma chave (ex: "CONDUTOR")
+                if chave_encontrada:
+                    # Pega o valor na célula à direita (col_idx + 1)
+                    if (col_idx + 1) < len(row):
+                        valor = row.iloc[col_idx + 1] # Pega o valor
+                        
+                        if not pd.isna(valor):
+                            dados[chave_encontrada] = str(valor).strip()
+                            chaves_encontradas.add(chave_encontrada)
+            
+            # Se já encontramos todas as chaves, paramos de ler a planilha
+            if chaves_encontradas == chaves_necessarias:
+                logger("Todas as chaves necessárias foram encontradas.")
+                break 
  
-        # Mapeamento com base no layout (índice 0 do pandas):
-        # D2 -> iloc[linha=1, coluna=3] (Linha 2, Coluna D)
-        dados['nome'] = df.iloc[3, 2]
-       
-        # E4 -> iloc[linha=3, coluna=4] (Linha 4, Coluna E)
-        matricula_bruta = df.iloc[4, 2]
-       
-        # D7 -> iloc[linha=6, coluna=3] (Linha 7, Coluna D)
-        dados['placa'] = df.iloc[7, 2]
- 
-        # D6 -> iloc[linha=5, coluna=3] (Linha 6, Coluna D)
-        veiculo_completo = str(df.iloc[6, 2])
- 
-        # Lógica de divisão da Marca/Modelo
-        if veiculo_completo and ' ' in veiculo_completo and veiculo_completo.lower() != 'nan':
+        # --- PÓS-PROCESSAMENTO ---
+        
+        # Verifica se todas as chaves foram realmente encontradas
+        if chaves_encontradas != chaves_necessarias:
+            chaves_faltantes = chaves_necessarias - chaves_encontradas
+            logger(f"ERRO: Não foi possível encontrar todas as chaves. Faltando: {chaves_faltantes}")
+            logger(f"Verifique se a planilha contém os rótulos: {list(MAP_CHAVES_BUSCA.values())}")
+            return None
+
+        # Tratamento da Matrícula (CPF)
+        if 'matricula' in dados:
+            matricula_bruta = dados['matricula']
+            try:
+                # Tenta formato numérico
+                dados['matricula'] = str(int(float(matricula_bruta)))
+            except ValueError:
+                # Se falhar, assume formato texto (ex: 810.881.321-20)
+                matricula_limpa = str(matricula_bruta).strip()
+                matricula_limpa = ''.join(filter(str.isdigit, matricula_limpa))
+                dados['matricula'] = matricula_limpa
+        
+        # Lógica de divisão da Marca/Modelo (baseado na chave 'veiculo')
+        veiculo_completo = dados.get('veiculo', '')
+        if veiculo_completo and ' ' in veiculo_completo:
             partes = veiculo_completo.split(' ', 1)
             dados['marca'] = partes[0]
             dados['modelo'] = partes[1]
         else:
-            # Se não tiver espaço, ou for "nan", usa o valor inteiro como marca
-            dados['marca'] = veiculo_completo if veiculo_completo.lower() != 'nan' else ""
+            dados['marca'] = veiculo_completo
             dados['modelo'] = ""
            
-        # Tratamento da Matrícula (para remover .0 se for lida como float)
-        if pd.isna(matricula_bruta):
-             dados['matricula'] = None # Trata se a célula estiver vazia
-        else:
-            # Converte para int (para remover .0) e depois para string
-            dados['matricula'] = str(int(float(matricula_bruta)))
-   
-        # Validação simples
-        if not all([dados['nome'], dados['matricula'], dados['placa']]): # Marca não é mais obrigatória
-            logger(f"AVISO: Dados faltando na planilha {caminho_arquivo}.")
-            logger(f"Verifique as células: D2 (Nome), E4 (Matrícula), D7 (Placa).")
+        # Validação final (campos obrigatórios para o formulário)
+        if not all([dados.get('nome'), dados.get('matricula'), dados.get('placa')]):
+            logger(f"AVISO: Dados essenciais (Nome, Matrícula ou Placa) estão faltando após a extração.")
             return None
            
-        logger("Dados extraídos com sucesso (usando pandas).")
-        logger(f"Nome: {dados['nome']}, Matrícula: {dados['matricula']}, Placa: {dados['placa']}")
+        logger("Dados extraídos com sucesso (usando busca).")
+        logger(f"Nome: {dados.get('nome')}, Matrícula: {dados.get('matricula')}, Placa: {dados.get('placa')}, Destino: {dados.get('destino')}, Veículo: {dados.get('marca')} {dados.get('modelo')}")
         return dados
  
     except Exception as e:
         logger(f"ERRO ao ler a planilha com pandas '{caminho_arquivo}': {e}")
-        logger("Verifique se o arquivo é uma planilha válida e se as células D2, E4, D6, D7 existem.")
+        logger("Verifique se o arquivo é uma planilha válida.")
         return None
  
-def preencher_formulario_web(dados_veiculo, logger):
+def preencher_formulario_web(dados_veiculo, logger, callback_pausa_login):
     """
     Inicia o Selenium, pausa para login manual e preenche o formulário.
+    Usa um 'callback' para pausar em vez de 'input()'.
     """
     logger("Iniciando automação com Selenium...")
    
@@ -94,22 +147,18 @@ def preencher_formulario_web(dados_veiculo, logger):
         driver = webdriver.Chrome(service=service)
         driver.get(URL_LOGIN)
        
-        logger("="*50)
-        logger("--- AÇÃO MANUAL NECESSÁRIA ---")
-        logger("O navegador foi aberto.")
-        logger("1. Faça o login no sistema.")
-        logger("2. Resolva o CAPTCHA (se houver).")
-        logger("3. Navegue até a tela 'Cadastrar Vendas sem Cartão'.")
-        logger("\nIMPORTANTE: Quando o formulário (imagem 1) estiver VISÍVEL,")
-        logger("pressione a tecla 'Enter' no CONSOLE (terminal) onde")
-        logger("você iniciou a aplicação.")
-        logger("="*50)
-       
-        input("Pressione Enter no CONSOLE (terminal) para continuar...")
+        # Chama a função de pausa (que mostrará o messagebox na UI)
+        if callback_pausa_login:
+            callback_pausa_login()
+        else:
+            # Fallback caso nenhum callback seja passado
+            logger("AVISO: Nenhum callback de pausa fornecido. Pausando no console.")
+            input("Pressione Enter no CONSOLE (terminal) para continuar...")
        
         logger("Continuando automação... Preenchendo formulário.")
        
         wait = WebDriverWait(driver, 30)
+        # Espera o primeiro campo do formulário ficar visível
         wait.until(EC.visibility_of_element_located(LOCATORS['cliente_codigo']))
        
         logger("Preenchendo campos fixos...")
@@ -125,7 +174,7 @@ def preencher_formulario_web(dados_veiculo, logger):
         driver.find_element(*LOCATORS['veiculo_marca']).send_keys(dados_veiculo['marca'])
         driver.find_element(*LOCATORS['veiculo_modelo']).send_keys(dados_veiculo['modelo'])
        
-        logger("Formulário preenchido com sucesso!")
+        logger("Formulário preenchendido com sucesso!")
         logger("A automação irá pausar por 15 segundos antes de fechar o navegador.")
         time.sleep(15)
        
@@ -137,3 +186,4 @@ def preencher_formulario_web(dados_veiculo, logger):
         if driver:
             driver.quit()
         logger("Navegador fechado. Automação concluída.")
+
