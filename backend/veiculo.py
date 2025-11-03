@@ -9,6 +9,7 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.keys import Keys # Importa a classe Keys
+from selenium.webdriver.common.action_chains import ActionChains
  
 URL_LOGIN = "https://www.valeshop.com.br/portal/valeshop/!AP_LOGIN?p_tipo=1"
  
@@ -147,6 +148,19 @@ def preencher_formulario_web(dados_veiculo, logger, callback_pausa_login):
             logger(f"ERRO CRÍTICO: Não foi possível mudar para o frame 'content' (Nível 1). Erro: {e}")
             raise e
         
+        try:
+            logger("Localizando e clicando no botão 'CONTROLLER'...")
+            # Usa o localizador mais simples e correto: O texto do link
+            controller_link = wait.until(EC.element_to_be_clickable((
+                By.LINK_TEXT, "CONTROLLER"
+            )))
+            controller_link.click()
+            logger("Clique em 'CONTROLLER' efetuado.")
+        except Exception as e:
+            logger(f"ERRO: Não foi possível clicar em 'CONTROLLER'. {e}")
+            logger("Verifique se o texto 'CONTROLLER' está exatamente assim (maiúsculas).")
+            raise
+
         # 2. Mudar para o <frame> ANINHADO (Nível 2)
         try:
             logger("Tentando mudar para o frame 'content' (Nível 2, aninhado)...")
@@ -157,7 +171,30 @@ def preencher_formulario_web(dados_veiculo, logger, callback_pausa_login):
         except Exception as e:
             logger(f"ERRO CRÍTICO: Não foi possível mudar para o frame 'content' aninhado (Nível 2). Erro: {e}")
             raise e
+
+        try:
+            logger("Navegando no menu (Veículo > Compras sem Cartão > Inclusão)...")
+
+            # 1. Espera o menu "Veículo" aparecer
+            menu_veiculo = wait.until(EC.visibility_of_element_located((
+                By.LINK_TEXT, "Veículo"
+            )))
+
+            actions = ActionChains(driver)
+            actions.move_to_element(menu_veiculo).perform()   # Paira o mouse sobre "Veículo"
+
+            # 2. Localiza os submenus
+            menu_compras = wait.until(EC.visibility_of_element_located((By.LINK_TEXT, "Compras sem cartão")))
+            menu_compras.click()  # Paira o mouse sobre "Compras sem Cartão"
             
+            menu_inclusao = wait.until(EC.visibility_of_element_located((By.LINK_TEXT, "Inclusão")))
+            menu_inclusao.click()                      # Executa a ação
+            
+            logger("Navegação do menu concluída.")
+        except Exception as e:
+            logger(f"ERRO: Falha ao navegar no menu 'Veículo'. {e}")
+            raise
+
         # 3. Preencher os campos (agora estamos no Nível 2)
         try:
             logger("Esperando pelo primeiro campo (Cliente) com NAME 'p_id_cliente'...")
