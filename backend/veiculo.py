@@ -22,6 +22,7 @@ LOCATORS = {
     'veiculo_placa': (By.NAME, 'p_nr_placa_veiculo'),
     'veiculo_marca': (By.NAME, 'p_ds_marca_veiculo'),
     'veiculo_modelo': (By.NAME, 'p_nm_modelo_veiculo'),
+    'destino': (By.NAME, 'p_nm_razao_social_cre'),
 }
 
 MAP_CHAVES_BUSCA = {
@@ -33,7 +34,6 @@ MAP_CHAVES_BUSCA = {
 }
  
 def _extrair_valor_busca(texto_celula):
-    """Verifica se uma célula contém uma das chaves que procuramos."""
     if not isinstance(texto_celula, str):
         return None
     
@@ -47,10 +47,6 @@ def _extrair_valor_busca(texto_celula):
  
  
 def extrair_dados_planilha(caminho_arquivo, logger):
-    """
-    Lê a planilha inteira procurando pelas chaves e capturando
-    o valor na célula à direita.
-    """
     logger(f"Lendo planilha com pandas (modo busca): {caminho_arquivo}")
     try:
         with open(caminho_arquivo, 'rb') as f:
@@ -116,10 +112,6 @@ def extrair_dados_planilha(caminho_arquivo, logger):
         return None
  
 def preencher_formulario_web(dados_veiculo, logger, callback_pausa_login):
-    """
-    Inicia o Selenium, pausa para login, entra no frame
-    e preenche o formulário.
-    """
     logger("Iniciando automação com Selenium...")
     
     driver = None
@@ -138,7 +130,6 @@ def preencher_formulario_web(dados_veiculo, logger, callback_pausa_login):
         
         wait = WebDriverWait(driver, 30)
         
-        # 1. Mudar para o <frame> principal (Nível 1)
         try:
             logger("Tentando mudar para o frame 'content' (Nível 1)...")
             wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "content")))
@@ -164,7 +155,6 @@ def preencher_formulario_web(dados_veiculo, logger, callback_pausa_login):
         # 2. Mudar para o <frame> ANINHADO (Nível 2)
         try:
             logger("Tentando mudar para o frame 'content' (Nível 2, aninhado)...")
-            # O driver agora procura *dentro* do Nível 1
             wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "content")))
             logger("Mudança para frame 'content' (Nível 2) bem-sucedida.")
             
@@ -237,6 +227,10 @@ def preencher_formulario_web(dados_veiculo, logger, callback_pausa_login):
         campo_modelo = driver.find_element(*LOCATORS['veiculo_modelo'])
         campo_modelo.send_keys(Keys.CONTROL, "a")
         campo_modelo.send_keys(dados_veiculo['modelo'])
+        
+        campo_modelo = driver.find_element(*LOCATORS['destino'])
+        campo_modelo.send_keys(Keys.CONTROL, "a")
+        campo_modelo.send_keys(dados_veiculo['destino'])
         
         logger("Formulário preenchendido com sucesso!")
         logger("A automação irá pausar por 15 segundos antes de fechar o navegador.")
