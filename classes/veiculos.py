@@ -54,7 +54,7 @@ class AppCadastroVeiculo:
     def _log_update(self, mensagem: str):
         self.log_text.config(state='normal')
         self.log_text.insert(tk.END, f"{mensagem}\n")
-        self.log_text.see(tk.END) # Auto-scroll
+        self.log_text.see(tk.END) 
         self.log_text.config(state='disabled')
             
     def selecionar_arquivo_veiculo(self):
@@ -64,7 +64,7 @@ class AppCadastroVeiculo:
         ]
         arquivo = tk.filedialog.askopenfilename(title="Selecione o arquivo de cadastro", filetypes=tipos_arquivo)
         if arquivo:
-            self.functions.arquivos_selecionados = [arquivo] # Armazena como lista
+            self.functions.arquivos_selecionados = [arquivo] 
             if self.functions.lbl_entrada_status:
                 self.functions.lbl_entrada_status.config(text=f"Arquivo selecionado: {arquivo}")
             self.log(f"Entrada definida: {arquivo}")
