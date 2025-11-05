@@ -1,6 +1,11 @@
 # 🤖 Automação de Registro de Veículos - Portal Valeshop
 Um robô (RPA) desenvolvido em Python que automatiza o processo de registro de múltiplos abastecimentos de veículos no portal Valeshop. O robô lê os dados de uma planilha Excel e preenche o formulário web, lidando com popups, campos dinâmicos e validações de JavaScript.
 
+![Python](https://img.shields.io/badge/Python-3.10+-blue?style=for-the-badge&logo=python&logoColor=white)
+![Pandas](https://img.shields.io/badge/Pandas-Data%20Analysis-150458?style=for-the-badge&logo=pandas)
+![Selenium](https://img.shields.io/badge/Selenium-Web%20Automation-43B02A?style=for-the-badge&logo=selenium&logoColor=white)
+![Tkinter](https://img.shields.io/badge/Tkinter-GUI%20Toolkit-ffcc00?style=for-the-badge)
+
 ## ✨ Funcionalidades Principais
 
 Interface Gráfica (GUI): Uma interface simples em Tkinter para seleção de arquivo e log de progresso em tempo real.
