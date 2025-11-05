@@ -6,7 +6,7 @@ from classes.veiculos import AppCadastroVeiculo
 class MainApplication:
     def __init__(self, root):
         self.root = root
-        self.root.title("Gerenciador Cebraspe") 
+        self.root.title("Gerenciador Cebraspe")
         self.root.geometry("800x700") 
 
         style = ttk.Style()

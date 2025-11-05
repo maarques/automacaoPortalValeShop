@@ -1,9 +1,15 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
-from classes.filesFunctions import FilesFunctions
+from tkinter import ttk, messagebox, filedialog
+from classes.filesFunctions import FilesFunctions # Você mencionou esta classe, então a mantive
 import threading
-import pandas as pd
+import time
+
+# Importa o seu backend
 import backend.veiculo as backend 
+
+# Precisamos das "Expected Conditions" (EC) para esperar o botão
+from selenium.webdriver.support import expected_conditions as EC
+# (ActionChains não é mais necessário aqui)
 
 
 class AppCadastroVeiculo:
@@ -35,6 +41,7 @@ class AppCadastroVeiculo:
         self.log_text.pack(fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.log_text.yview)
 
+        # Assumindo que FilesFunctions lida com o self.lbl_entrada_status
         self.functions = FilesFunctions(self.lbl_entrada_status, None, self.log_text)
 
         btn_arquivos = ttk.Button(frame_entrada, text="Selecionar Arquivo (.xlsx)", command=self.selecionar_arquivo_veiculo)
@@ -62,7 +69,7 @@ class AppCadastroVeiculo:
             ("Planilha Excel", "*.xlsx"),
             ("Todos os arquivos", "*.*")
         ]
-        arquivo = tk.filedialog.askopenfilename(title="Selecione o arquivo de cadastro", filetypes=tipos_arquivo)
+        arquivo = filedialog.askopenfilename(title="Selecione o arquivo de cadastro", filetypes=tipos_arquivo)
         if arquivo:
             self.functions.arquivos_selecionados = [arquivo] 
             if self.functions.lbl_entrada_status:
@@ -85,45 +92,101 @@ class AppCadastroVeiculo:
             daemon=True
         ).start()
 
-    def _funcao_de_pausa_para_login(self):
+    def _callback_pausa_login_gui(self):
+        """
+        Esta função é chamada pelo backend para pausar a automação
+        e esperar o login manual.
+        """
         self.log("="*50)
         self.log("--- AÇÃO MANUAL NECESSÁRIA ---")
         self.log("O navegador foi aberto.")
         self.log("1. Faça o login no sistema.")
         self.log("2. Resolva o CAPTCHA (se houver).")
-        self.log("3. Navegue até a tela 'Cadastrar Vendas sem Cartão'.")
         self.log("="*50)
         
         messagebox.showinfo(
-            "Ação Manual Necessária",
+            "Pausa para Login",
             "O navegador foi aberto.\n\n"
-            "1. Faça o login no sistema.\n"
-            "2. Resolva o CAPTCHA (se houver).\n"
-            "3. Navegue até a tela 'Cadastrar Vendas sem Cartão'.\n\n"
-            "Clique em 'OK' NESTA JANELA apenas quando o formulário estiver visível."
+            "Faça o login e resolva o CAPTCHA (se houver).\n\n"
+            "Clique em 'OK' NESTA JANELA para o robô continuar."
         )
+        self.log("Usuário clicou em OK. Continuando automação...")
 
     def processar_em_thread(self):
+        """
+        Lógica de submissão revertida para o "Plano D" (submeter o form),
+        que é a mais robusta para este caso.
+        """
+        driver = None 
         try:
             caminho_arquivo = self.functions.arquivos_selecionados[0]
             self.log(f"Processando arquivo: {caminho_arquivo}")
             
-            dados_veiculo = backend.extrair_dados_planilha(caminho_arquivo, self.log)
+            dados_cabecalho, lista_transacoes = backend.extrair_dados_planilha(caminho_arquivo, self.log)
             
-            if dados_veiculo:
-                backend.preencher_formulario_web(
-                    dados_veiculo, 
-                    self.log, 
-                    self._funcao_de_pausa_para_login
-                )
-            else:
-                self.log("ERRO: Falha ao extrair dados da planilha. Verifique o log acima.")
+            if not dados_cabecalho or not lista_transacoes:
+                self.log("ERRO: Falha ao extrair dados (cabeçalho ou transações). Verifique o log.")
                 self.frame.after(0, lambda: messagebox.showerror("Erro de Leitura", "Não foi possível ler os dados da planilha. Verifique o log."))
+                return
+            
+            self.log(f"Dados de cabeçalho extraídos. {len(lista_transacoes)} transações encontradas.")
+
+            driver, wait = backend.iniciar_e_logar(self.log, self._callback_pausa_login_gui)
+            if not driver:
+                raise Exception("Falha ao iniciar o navegador.")
+            
+            if not backend.navegar_ate_formulario(driver, wait, self.log):
+                raise Exception("Falha ao navegar até o formulário de inclusão.")
+
+            # 4. Inicia o LOOP de registros
+            for i, transacao in enumerate(lista_transacoes):
+                self.log(f"--- Processando Registro {i+1} de {len(lista_transacoes)} ---")
+                self.log(f"Dados: {transacao}")
+                
+                dados_completos = {**dados_cabecalho, **transacao}
+                
+                # 5. Preenche os campos (agora com a lógica do popup)
+                if not backend.preencher_um_registro(driver, wait, dados_completos, self.log):
+                    self.log(f"ERRO ao preencher o registro {i+1}. Abortando.")
+                    break 
+                
+                # 6. Submete o formulário
+                self.log("Campos preenchidos. Submetendo o formulário principal...")
+                try:
+                    # --- ### LÓGICA DO PLANO D (SUBMIT FORM) ### ---
+                    
+                    # 1. Encontra o formulário principal
+                    form_principal = wait.until(EC.presence_of_element_located(
+                        backend.LOCATORS['form_principal']
+                    ))
+                    
+                    # 2. Submete o formulário
+                    form_principal.submit()
+                    self.log("Evento 'submit' enviado ao FORM.")
+                    # --- Fim da Lógica ---
+                    
+                    self.log("Aguardando 5 segundos após o submit...")
+                    time.sleep(5) 
+
+                except Exception as e_confirm:
+                    self.log(f"ERRO: Não foi possível submeter o formulário principal. {e_confirm}")
+                    raise e_confirm
+
+
+                # 7. Prepara para o próximo registro
+                if i < len(lista_transacoes) - 1:
+                    self.log("Formulário enviado. Preparando para o próximo registro...")
+            
+            self.log("--- TODOS OS REGISTROS FORAM PROCESSADOS ---")
+            self.log("Aguardando 10 segundos antes de fechar.")
+            time.sleep(10)
 
         except Exception as e:
             self.log(f"\nERRO INESPERADO no processamento: {e}")
             self.frame.after(0, lambda: messagebox.showerror("Erro Inesperado", f"Ocorreu um erro: {e}"))
         finally:
+            if driver:
+                driver.quit()
+                self.log("Navegador fechado.")
             self.frame.after(0, lambda: self.btn_gerar.config(text="REGISTRAR VEÍCULO", state='normal'))
-
-
+            self.log("Processo finalizado.")
